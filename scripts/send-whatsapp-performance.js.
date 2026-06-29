@@ -1,10 +1,68 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
+const qrcode = require('qrcode-terminal');
 const admin = require('firebase-admin');
 
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  console.error("❌ ERROR: FIREBASE_SERVICE_ACCOUNT secret is missing!");
+  process.exit(1);
+}
+
+try {
+  const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+} catch (e) {
+  console.error("❌ ERROR: Failed to parse Firebase secret:", e.message);
+  process.exit(1);
+}
+
 const db = admin.firestore();
 
-// Gathers metrics from Firestore and schedules puppet messaging...
+async function generateReports() {
+  console.log("Fetching data from Firestore...");
+  const employeesSnap = await db.collection('employees').get();
+  const employees = [];
+  employeesSnap.forEach(doc => {
+    const d = doc.data();
+    if (d.role === 'employee' && d.whatsapp) {
+      employees.push({ id: doc.id, name: d.name || doc.id, whatsapp: d.whatsapp.replace(/\D/g, '') });
+    }
+  });
+  return employees;
+}
+
+const client = new Client({
+  authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu'
+    ]
+  }
+});
+
+client.on('qr', (qr) => {
+  console.log('=========== SCAN WHATSAPP LOGIN QR CODE ===========');
+  qrcode.generate(qr, { small: true });
+  console.log('==================================================');
+});
+
+client.on('ready', async () => {
+  console.log('✅ Client is ready!');
+  const emps = await generateReports();
+  for (const emp of emps) {
+    const formattedNum = `${emp.whatsapp}@c.us`;
+    const message = `📊 *Daily Performance Report*\n\n👤 *Name:* ${emp.name}\n📅 *Date:* ${new Date().toLocaleDateString('en-CA')}\n\n💪 Keep up the amazing work caller! 🚀`;
+    console.log(`Sending report to ${emp.name}...`);
+    await client.sendMessage(formattedNum, message);
+  }
+  console.log('All reports sent!');
+  await client.destroy();
+  process.exit(0);
+});
+
+client.initialize();
