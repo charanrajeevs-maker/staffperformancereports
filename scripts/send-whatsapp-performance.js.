@@ -1,0 +1,10 @@
+const { Client, LocalAuth } = require('whatsapp-web.js');
+const admin = require('firebase-admin');
+
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+const db = admin.firestore();
+
+// Gathers metrics from Firestore and schedules puppet messaging...
